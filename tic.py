@@ -6,6 +6,7 @@ import socket
 import ssl
 import sys
 import time
+from functools import wraps
 
 class TIC(object):
 	""" define some TIC constants """
@@ -54,16 +55,11 @@ class TICClient(object):
 		# time is in the allowed range
 		return 0
 
-	def logout(self, msg=None):
-		if msg == None:
-			msg = 'bye'
-		# server replies and immediately hangs up so we can't use _interact
-		self.sock.send('QUIT {}'.format(msg).encode())
-		self._state = 'disconnected'
-		self.sock = None
-		self.sockfile = None
+	def login(self, username, password, server, requiretls=False):
 
-	def login(self, username, password, server, **options):
+		if self._state != 'disconnected':
+			self.log.warn('Login in bad state: %s', self._state)
+			return
 
 		self.log.debug('Trying to connect to TIC server %s', server)
 
@@ -89,15 +85,17 @@ class TICClient(object):
 			raise Exception(msg)
 
 		# Upgrade to TLS if available
-		#try:
-		#	ret,val = self._interact('starttls\n')
-		#except:
-		#	# TODO: confirm if TLS was required
-		#	self.log.warn('TLS unsupported')
-
-		#if ret[0] == 2:
-		#	self.sock = ssl.wrap_socket(self.sock, ssl_version=ssl.PROTOCOL_TLSv1)
-		#	self.sockfile = self.sock.makefile()
+		ret,val = self._interact('starttls\n')
+		if ret[0] == '2':
+			try:
+				self.sock = ssl.wrap_socket(self.sock, ssl_version=ssl.PROTOCOL_TLSv1)
+				self.sockfile = self.sock.makefile()
+			except Exception as e:
+				self.log.warn('TLS unsupported')
+		elif requiretls:
+			self.log.error('TLS unsupported but required')
+		else:
+			self.log.info('TLS unsupported')
 
 		# Send our username
 		ret,val = self._interact('username {}\n', username)
@@ -112,11 +110,34 @@ class TICClient(object):
 
 		self._state = 'connected'
 
+	
+	def whileconnected(fn):
+		@wraps(fn)
+		def f(self, *args, **kwargs):
+			if self._state != 'connected':
+				self.log.warn('not connected')
+				return None
+			try:
+				val = fn(self, *args, **kwargs)
+			except Exception as e:
+				self.log.error('Operation failed: %s', e)
+				val = None
+			return val
+		return f
+
+	@whileconnected
+	def logout(self, msg=None):
+		if msg == None:
+			msg = 'bye'
+		ret,val = self._interact('QUIT {}\n', msg)
+		self._state = 'disconnected'
+		self.sock = None
+		self.sockfile = None
+
 	@property
+	@whileconnected
 	def tunnels(self):
-		if self._state != 'connected':
-			self.log.warn('not connected')
-			return []
+
 		ret,val = self._interact('tunnel list\n')
 		if ret != '201':
 			self.log.warn('Could not list tunnels: %s\n', val)
@@ -138,10 +159,9 @@ class TICClient(object):
 			})
 		return tuns
 
+	@whileconnected
 	def tunnel(self, id):
-		if self._state != 'connected':
-			self.log.warn('not connected')
-			return []
+
 		ret,val = self._interact('tunnel show {}\n', id)
 		tun = {}
 		for val in self.sockfile:
@@ -152,10 +172,9 @@ class TICClient(object):
 		return tun
 
 	@property
+	@whileconnected
 	def routes(self):
-		if self._state != 'connected':
-			self.log.warn('not connected')
-			return []
+
 		ret,val = self._interact('route list\n')
 		if ret != '201':
 			self.log.warn('Could not list routes: %s\n', val)
@@ -176,10 +195,9 @@ class TICClient(object):
 			})
 		return rts
 
+	@whileconnected
 	def route(self, id):
-		if self._state != 'connected':
-			self.log.warn('not connected')
-			return []
+
 		ret,val = self._interact('route show {}\n', id)
 		rt = {}
 		for val in self.sockfile:
@@ -188,3 +206,31 @@ class TICClient(object):
 			key,data = val.rstrip().split(':', 1)
 			rt[key] = data.lstrip()
 		return rt
+
+	@property
+	@whileconnected
+	def pops(self):
+
+		ret,val = self._interact('pop list\n')
+		if ret != '201':
+			self.log.warn('Could not list pops: %s\n', val)
+			return []
+
+		pops = []
+		for val in self.sockfile:
+			self.log.debug('<-- ' + val.rstrip())
+			if val[0:3] == '202': break
+			pops.append(val.rstrip())
+		return pops
+
+	@whileconnected
+	def pop(self, id):
+
+		ret,val = self._interact('pop show {}\n', id)
+		pop = {}
+		for val in self.sockfile:
+			self.log.debug('<-- ' + val.rstrip())
+			if val[0:3] == '202': break
+			key,data = val.rstrip().split(':', 1)
+			pop[key] = data.lstrip()
+		return pop 
