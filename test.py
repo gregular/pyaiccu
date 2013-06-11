@@ -35,4 +35,4 @@ def main(username, password, server='tic.sixxs.net'):
 	t.logout()
 
 if __name__ == '__main__':
-	main(sys.argv[1:0])
+	main(sys.argv[1], sys.argv[2], *sys.argv[3:])

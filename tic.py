@@ -91,9 +91,13 @@ class TICClient(object):
 				self.sock = ssl.wrap_socket(self.sock, ssl_version=ssl.PROTOCOL_TLSv1)
 				self.sockfile = self.sock.makefile()
 			except Exception as e:
-				self.log.warn('TLS unsupported')
+				self.log.warn('TLS upgrade failed')
+				self.logout('Upgrade to TLS failed')
+				raise e
 		elif requiretls:
 			self.log.error('TLS unsupported but required')
+			self.logout('Require TLS, but unavailable')
+			return
 		else:
 			self.log.info('TLS unsupported')
 
